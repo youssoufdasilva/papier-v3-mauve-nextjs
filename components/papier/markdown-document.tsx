@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment } from "react"
+import { Fragment, useEffect, useRef } from "react"
 
 import type { Annotation } from "@/lib/papier/types"
 
@@ -108,25 +108,42 @@ function renderHighlightedText(text: string, annotations: Annotation[]) {
 
 export function MarkdownDocument({ markdown, annotations, onSelectionChange }: MarkdownDocumentProps) {
   const blocks = parseMarkdownBlocks(markdown)
+  const articleRef = useRef<HTMLElement | null>(null)
 
-  const handleSelection = () => {
-    if (!onSelectionChange || typeof window === "undefined") return
-    const browserSelection = window.getSelection()
-    const quote = browserSelection?.toString().trim() || ""
-    if (!quote) {
-      onSelectionChange(null)
+  useEffect(() => {
+    if (!onSelectionChange || typeof window === "undefined") {
       return
     }
-    const index = markdown.indexOf(quote)
-    onSelectionChange({
-      quote,
-      prefix: index >= 0 ? markdown.slice(Math.max(0, index - 24), index) : "",
-      suffix: index >= 0 ? markdown.slice(index + quote.length, index + quote.length + 24) : "",
-    })
-  }
+
+    const handleSelection = () => {
+      const browserSelection = window.getSelection()
+      const quote = browserSelection?.toString().trim() || ""
+      const anchorNode = browserSelection?.anchorNode
+      const withinArticle =
+        anchorNode instanceof Node && articleRef.current?.contains(anchorNode)
+
+      if (!quote || !withinArticle) {
+        onSelectionChange(null)
+        return
+      }
+
+      const index = markdown.indexOf(quote)
+      onSelectionChange({
+        quote,
+        prefix: index >= 0 ? markdown.slice(Math.max(0, index - 24), index) : "",
+        suffix:
+          index >= 0
+            ? markdown.slice(index + quote.length, index + quote.length + 24)
+            : "",
+      })
+    }
+
+    document.addEventListener("selectionchange", handleSelection)
+    return () => document.removeEventListener("selectionchange", handleSelection)
+  }, [markdown, onSelectionChange])
 
   return (
-    <article className="prose prose-sm max-w-none dark:prose-invert" onMouseUp={handleSelection}>
+    <article ref={articleRef} className="prose prose-sm max-w-none dark:prose-invert">
       {blocks.map((block) => {
         if (block.type === "heading") {
           const content = renderHighlightedText(block.text, annotations)

@@ -1,0 +1,5 @@
+2026/03/18-16:10:30.804 419d Creating DB /workspace/.rodney/chrome-data/Default/Local Storage/leveldb since it was missing.
+2026/03/18-16:10:30.808 419d Reusing MANIFEST /workspace/.rodney/chrome-data/Default/Local Storage/leveldb/MANIFEST-000001
+2026/03/18-16:11:30.810 41b7 Level-0 table #5: started
+2026/03/18-16:11:30.812 41b7 Level-0 table #5: 20235 bytes OK
+2026/03/18-16:11:30.812 41b7 Delete type=0 #3

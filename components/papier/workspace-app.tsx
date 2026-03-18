@@ -122,6 +122,11 @@ export function WorkspaceApp({ initialSnapshot }: WorkspaceAppProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const saveTimeoutRef = useRef<number | null>(null)
+  const editorSelectionRef = useRef<{ start: number; end: number } | null>(null)
+  const previousContextRef = useRef<{ projectId: string | null; documentId: string | null }>({
+    projectId: null,
+    documentId: null,
+  })
 
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>(sortSnapshot(initialSnapshot))
   const [queue, setQueue] = useState<QueuedMutation[]>([])
@@ -387,12 +392,19 @@ export function WorkspaceApp({ initialSnapshot }: WorkspaceAppProps) {
   }, [panels])
 
   useEffect(() => {
+    const projectId = currentProject?.id || null
+    const documentId = currentDocument?.id || null
+    const projectChanged = previousContextRef.current.projectId !== projectId
+    const documentChanged = previousContextRef.current.documentId !== documentId
+
     if (selection) {
       setChatScope("selection")
-    } else if (currentProject) {
-      setChatScope(currentDocument ? "document" : "project")
+    } else if (projectChanged || documentChanged) {
+      setChatScope(documentId ? "document" : projectId ? "project" : "document")
     }
-  }, [selection, currentDocument, currentProject])
+
+    previousContextRef.current = { projectId, documentId }
+  }, [selection, currentDocument?.id, currentProject?.id])
 
   const applyMutationsOptimistically = useCallback((mutations: WorkspaceMutation[]) => {
     setSnapshot((current) => sortSnapshot(mutations.reduce(applyWorkspaceMutation, current)))
@@ -500,7 +512,9 @@ export function WorkspaceApp({ initialSnapshot }: WorkspaceAppProps) {
           })
         )
       )
-      openSourceDocument(data.document.id, null)
+      if (!currentProject) {
+        openSourceDocument(data.document.id, null)
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Upload failed.")
     } finally {
@@ -676,6 +690,45 @@ export function WorkspaceApp({ initialSnapshot }: WorkspaceAppProps) {
     ])
     setAnnotationNote("")
     setSelection(null)
+  }
+
+  const createAnnotationFromEditorSelection = async () => {
+    if (!currentProject || !currentWorkingDocument) {
+      return
+    }
+
+    const range = editorSelectionRef.current
+    if (!range || range.end <= range.start) {
+      setMessage("Select text in the editor first.")
+      return
+    }
+
+    const quote = editorValue.slice(range.start, range.end).trim()
+    if (!quote) {
+      setMessage("Select text in the editor first.")
+      return
+    }
+
+    const now = createTimestamp()
+    await submitMutations([
+      {
+        type: "CREATE_ANNOTATION",
+        annotation: {
+          id: createId("annotation"),
+          projectId: currentProject.id,
+          documentId: currentWorkingDocument.id,
+          documentKind: "working",
+          note: annotationNote.trim(),
+          quote,
+          prefix: editorValue.slice(Math.max(0, range.start - 24), range.start),
+          suffix: editorValue.slice(range.end, range.end + 24),
+          isStale: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+    ])
+    setAnnotationNote("")
   }
 
   const createDocumentCommentThread = async () => {
@@ -856,6 +909,44 @@ export function WorkspaceApp({ initialSnapshot }: WorkspaceAppProps) {
     },
     [currentAnnotations, currentWorkingDocument, submitMutations]
   )
+
+  const handleWorkingDocumentSelection = useCallback(
+    (value: string, selectionStart: number, selectionEnd: number) => {
+      editorSelectionRef.current = { start: selectionStart, end: selectionEnd }
+      if (selectionEnd <= selectionStart) {
+        return
+      }
+
+      const quote = value.slice(selectionStart, selectionEnd).trim()
+      if (!quote) {
+        return
+      }
+
+      setSelection({
+        quote,
+        prefix: value.slice(Math.max(0, selectionStart - 24), selectionStart),
+        suffix: value.slice(selectionEnd, selectionEnd + 24),
+      })
+    },
+    []
+  )
+
+  const captureEditorSelection = useCallback(() => {
+    const editor = document.querySelector(
+      'textarea[aria-label="Working document editor"]'
+    ) as HTMLTextAreaElement | null
+    const rememberedRange = editorSelectionRef.current
+    if (!editor) {
+      return
+    }
+
+    const range =
+      rememberedRange && rememberedRange.end > rememberedRange.start
+        ? rememberedRange
+        : { start: editor.selectionStart, end: editor.selectionEnd }
+
+    handleWorkingDocumentSelection(editor.value, range.start, range.end)
+  }, [handleWorkingDocumentSelection])
 
   return (
     <SidebarProvider defaultOpen>
@@ -1189,6 +1280,7 @@ export function WorkspaceApp({ initialSnapshot }: WorkspaceAppProps) {
                       </blockquote>
                       <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_auto_auto]">
                         <textarea
+                          aria-label="Annotation note"
                           className="min-h-20 w-full rounded-lg border border-input bg-background p-3 text-sm"
                           placeholder="Optional note for this annotation"
                           value={annotationNote}
@@ -1233,15 +1325,42 @@ export function WorkspaceApp({ initialSnapshot }: WorkspaceAppProps) {
                             <FloppyDiskBackIcon className="size-4" />
                             Working document editor
                           </div>
-                          <span className="text-xs text-muted-foreground">
-                            Autosaves after a short pause
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={captureEditorSelection}
+                              onMouseDown={(event) => {
+                                event.preventDefault()
+                                captureEditorSelection()
+                              }}
+                            >
+                              Use editor selection
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => void createAnnotationFromEditorSelection()}
+                            >
+                              Annotate editor selection
+                            </Button>
+                            <span className="text-xs text-muted-foreground">
+                              Autosaves after a short pause
+                            </span>
+                          </div>
                         </div>
                         <textarea
                           aria-label="Working document editor"
                           className="min-h-[60svh] w-full rounded-lg border border-input bg-background p-4 font-mono text-sm"
                           value={editorValue}
                           onChange={(event) => handleWorkingDocumentChange(event.target.value)}
+                          onSelect={(event) =>
+                            handleWorkingDocumentSelection(
+                              event.currentTarget.value,
+                              event.currentTarget.selectionStart,
+                              event.currentTarget.selectionEnd
+                            )
+                          }
                         />
                       </div>
                       <div className="rounded-xl border border-border bg-card p-4">
@@ -1426,6 +1545,7 @@ export function WorkspaceApp({ initialSnapshot }: WorkspaceAppProps) {
                       <label className="text-xs font-medium text-muted-foreground">
                         Compose scope
                         <select
+                          aria-label="Compose scope"
                           className="mt-1 w-full rounded-lg border border-input bg-background p-2"
                           value={chatScope}
                           onChange={(event) => setChatScope(event.target.value as ChatScope)}
@@ -1438,6 +1558,7 @@ export function WorkspaceApp({ initialSnapshot }: WorkspaceAppProps) {
                       <label className="text-xs font-medium text-muted-foreground">
                         History filter
                         <select
+                          aria-label="History filter"
                           className="mt-1 w-full rounded-lg border border-input bg-background p-2"
                           value={chatFilter}
                           onChange={(event) =>
@@ -1544,6 +1665,7 @@ export function WorkspaceApp({ initialSnapshot }: WorkspaceAppProps) {
                     <div className="rounded-lg border border-border p-3">
                       <div className="font-medium">Document-level comment</div>
                       <textarea
+                        aria-label="Document-level comment"
                         className="mt-2 min-h-24 w-full rounded-lg border border-input bg-background p-3"
                         placeholder="Store a project-scoped observation about the whole document."
                         value={documentComment}

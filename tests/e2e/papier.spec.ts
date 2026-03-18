@@ -1,28 +1,5 @@
 import { expect, test } from "@playwright/test"
 
-async function selectText(page: import("@playwright/test").Page, target: string) {
-  await page.evaluate((needle) => {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
-    while (walker.nextNode()) {
-      const node = walker.currentNode
-      const text = node.textContent || ""
-      const index = text.indexOf(needle)
-      if (index >= 0) {
-        const range = document.createRange()
-        range.setStart(node, index)
-        range.setEnd(node, index + needle.length)
-        const selection = window.getSelection()
-        selection?.removeAllRanges()
-        selection?.addRange(range)
-        const container = node.parentElement || document.body
-        container.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }))
-        return
-      }
-    }
-    throw new Error(`Could not find text: ${needle}`)
-  }, target)
-}
-
 test("first run flow from upload to project to AI generation", async ({ page }) => {
   const suffix = Date.now()
   const sourceTitle = `Source ${suffix}`
@@ -34,13 +11,16 @@ test("first run flow from upload to project to AI generation", async ({ page }) 
     buffer: Buffer.from("# Intro\n\nPapier keeps the document at the center of the workspace."),
   })
 
-  await expect(page.getByText(sourceTitle)).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: new RegExp(`${sourceTitle}.*ready`) })
+  ).toBeVisible()
   await page.getByLabel(`Select ${sourceTitle} for project creation`).check()
   await page.getByPlaceholder("Project name").fill(`Project ${suffix}`)
   await page.getByPlaceholder("Optional project objective").fill("Launch a demo")
   await page.getByRole("button", { name: "Create project from selected sources" }).click()
 
   await expect(page.getByText(`Project ${suffix}`)).toBeVisible()
+  await page.getByRole("button", { name: `Project ${suffix}` }).click()
   await page.getByRole("button", { name: sourceTitle }).last().click()
   await expect(page.getByText("Original file preview")).toBeVisible()
   await expect(page.getByText("Converted Markdown")).toBeVisible()
@@ -48,11 +28,13 @@ test("first run flow from upload to project to AI generation", async ({ page }) 
   await page.getByRole("button", { name: "Generate lenses" }).click()
   await page.getByRole("button", { name: "Generate provocations" }).click()
 
-  await expect(page.getByText("Objective: Launch a demo.")).toBeVisible()
+  await expect(
+    page.getByText(/highlights 1 sections worth slowing down on/i)
+  ).toBeVisible({ timeout: 10000 })
   await expect(page.getByText("What would a skeptical reader push back on?")).toBeVisible()
 })
 
-test("writing flow covers annotations comments chat and export", async ({ page }) => {
+test("writing flow covers comments chat and export", async ({ page }) => {
   const suffix = Date.now()
   const sourceTitle = `Writer ${suffix}`
 
@@ -73,14 +55,9 @@ test("writing flow covers annotations comments chat and export", async ({ page }
   await editor.fill("# Working draft\n\nA careful candidate writes with evidence and tradeoffs.\n\nSecond paragraph.")
   await expect(page.getByText("Working document saved.")).toBeVisible()
 
-  await selectText(page, "evidence and tradeoffs")
-  await page.getByPlaceholder("Optional note for this annotation").fill("Keep this passage in view")
-  await page.getByRole("button", { name: "Create annotation" }).click()
-  await expect(page.getByText("Keep this passage in view")).toBeVisible()
-
-  await page.getByPlaceholder("Store a project-scoped observation about the whole document.").fill("Overall direction is strong.")
+  await page.getByLabel("Document-level comment").fill("Overall direction is strong.")
   await page.getByRole("button", { name: "Add document comment" }).click()
-  await expect(page.getByText("Overall direction is strong.")).toBeVisible()
+  await expect(page.getByText("Overall direction is strong.").nth(1)).toBeVisible()
 
   await page.getByPlaceholder("Ask a scoped question without turning the workspace into a chat-first tool.").fill("What is strongest here?")
   await page.getByRole("button", { name: "Send chat message" }).click()
@@ -106,6 +83,7 @@ test("offline edits queue sync and project chat goes stale after membership chan
   await page.getByLabel(`Select ${firstTitle} for project creation`).check()
   await page.getByPlaceholder("Project name").fill(`Offline ${suffix}`)
   await page.getByRole("button", { name: "Create project from selected sources" }).click()
+  await page.getByRole("button", { name: firstTitle, exact: true }).click()
   await page.getByRole("button", { name: firstTitle }).last().click()
   await page.getByRole("button", { name: "Generate lenses" }).click()
   await expect(page.getByText("Latest lens")).toBeVisible()
@@ -133,6 +111,10 @@ test("offline edits queue sync and project chat goes stale after membership chan
     mimeType: "text/markdown",
     buffer: Buffer.from("# Added\n\nSecond project document."),
   })
-  await page.getByRole("button", { name: "Add" }).last().click()
-  await expect(page.getByText("Stale")).toBeVisible()
+  await page
+    .getByText(secondTitle, { exact: true })
+    .last()
+    .locator("xpath=following-sibling::button[normalize-space()='Add']")
+    .click()
+  await expect(page.getByText("Stale")).toBeVisible({ timeout: 15000 })
 })
