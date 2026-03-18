@@ -10,6 +10,8 @@
 
 # testing
 /coverage
+/playwright-report
+/test-results
 
 # next.js
 /.next/
@@ -30,6 +32,8 @@ pnpm-debug.log*
 
 # env files
 .env*.local
+/.papier/
+/.rodney/
 
 # typescript
 *.tsbuildinfo
